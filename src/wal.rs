@@ -93,13 +93,19 @@ fn replay(file: &mut File) -> Result<Vec<Record>> {
         match read_exact_or_torn(file, &mut header)? {
             ReadOutcome::Eof => break,
             ReadOutcome::Torn => {
-                file.set_len(pos)?;
+                truncate_torn(file, pos)?;
                 break;
             }
             ReadOutcome::Full => {}
         }
         let crc = u32_from_prefix(&header[0..4]);
         let len = u32_from_prefix(&header[4..8]);
+        let remaining = file.metadata()?.len().saturating_sub(pos);
+        let claimed = HEADER_LEN as u64 + u64::from(len);
+        if claimed > remaining {
+            truncate_torn(file, pos)?;
+            break;
+        }
         if len > MAX_PAYLOAD {
             return Err(Error::Corrupt {
                 offset: pos,
@@ -109,7 +115,7 @@ fn replay(file: &mut File) -> Result<Vec<Record>> {
         let mut payload = vec![0u8; len as usize];
         match read_exact_or_torn(file, &mut payload)? {
             ReadOutcome::Eof | ReadOutcome::Torn => {
-                file.set_len(pos)?;
+                truncate_torn(file, pos)?;
                 break;
             }
             ReadOutcome::Full => {}
@@ -119,7 +125,7 @@ fn replay(file: &mut File) -> Result<Vec<Record>> {
             let file_len = file.metadata()?.len();
             // checksum fail at EOF is a torn write, not a corrupt log
             if end == file_len {
-                file.set_len(pos)?;
+                truncate_torn(file, pos)?;
                 break;
             }
             return Err(Error::Corrupt {
@@ -135,6 +141,13 @@ fn replay(file: &mut File) -> Result<Vec<Record>> {
     }
     file.seek(SeekFrom::End(0))?;
     Ok(records)
+}
+
+fn truncate_torn(file: &mut File, pos: u64) -> Result<()> {
+    file.set_len(pos)?;
+    // durable size before later appends, or a crash can restore the old tail
+    file.sync_all()?;
+    Ok(())
 }
 
 fn read_exact_or_torn(file: &mut File, buf: &mut [u8]) -> Result<ReadOutcome> {

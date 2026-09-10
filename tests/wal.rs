@@ -99,6 +99,40 @@ fn torn_tail_is_discarded_then_appends_resume() {
 }
 
 #[test]
+fn last_record_length_past_eof_is_torn() {
+    let dir = scratch();
+    let _g = Guard(dir.clone());
+    {
+        let mut store = Store::open(&dir).unwrap();
+        store.put(b"keep", b"yes").unwrap();
+        store.put(b"lost", b"no").unwrap();
+    }
+    let path = wal_path(&dir);
+    let mut bytes = fs::read(&path).unwrap();
+    let at = last_record_len_offset(&bytes);
+    bytes[at..at + 4].copy_from_slice(&20_000_000u32.to_le_bytes());
+    fs::write(&path, &bytes).unwrap();
+
+    let store = Store::open(&dir).unwrap();
+    assert_eq!(store.get(b"keep"), Some(b"yes".as_slice()));
+    assert_eq!(store.get(b"lost"), None);
+}
+
+fn last_record_len_offset(bytes: &[u8]) -> usize {
+    let mut i = 0usize;
+    let mut last = None;
+    while i + 8 <= bytes.len() {
+        let rec_len = u32::from_le_bytes(bytes[i + 4..i + 8].try_into().unwrap()) as usize;
+        last = Some(i + 4);
+        match i.checked_add(8).and_then(|n| n.checked_add(rec_len)) {
+            Some(next) if next <= bytes.len() => i = next,
+            _ => break,
+        }
+    }
+    last.expect("wal has a framed record")
+}
+
+#[test]
 fn checksum_mismatch_on_last_record_is_torn() {
     let dir = scratch();
     let _g = Guard(dir.clone());
