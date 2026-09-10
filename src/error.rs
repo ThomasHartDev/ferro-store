@@ -5,6 +5,7 @@ use std::io;
 pub enum Error {
     Io(io::Error),
     InvalidArgument(&'static str),
+    Corrupt { offset: u64, reason: &'static str },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -14,6 +15,9 @@ impl fmt::Display for Error {
         match self {
             Error::Io(err) => write!(f, "io error: {err}"),
             Error::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
+            Error::Corrupt { offset, reason } => {
+                write!(f, "corrupt wal at offset {offset}: {reason}")
+            }
         }
     }
 }
@@ -23,6 +27,7 @@ impl std::error::Error for Error {
         match self {
             Error::Io(err) => Some(err),
             Error::InvalidArgument(_) => None,
+            Error::Corrupt { .. } => None,
         }
     }
 }
