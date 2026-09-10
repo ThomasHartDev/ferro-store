@@ -76,9 +76,9 @@ fn overwrite_last_write_wins() {
 fn delete_existing_and_missing() {
     let (mut store, _g) = open();
     store.put(b"k", b"v").unwrap();
-    assert!(store.delete(b"k"));
+    assert!(store.delete(b"k").unwrap());
     assert_eq!(store.get(b"k"), None);
-    assert!(!store.delete(b"k"));
+    assert!(!store.delete(b"k").unwrap());
 }
 
 #[test]
