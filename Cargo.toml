@@ -1,0 +1,17 @@
+[package]
+name = "ferro-store"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+description = "Embedded key-value storage engine in Rust (LSM-tree, WAL, crash recovery)"
+repository = "https://github.com/ThomasHartDev/ferro-store"
+readme = "README.md"
+keywords = ["database", "lsm", "kv", "embedded", "wal"]
+categories = ["database-implementations"]
+
+[lib]
+name = "ferro_store"
+path = "src/lib.rs"
+
+[dependencies]
