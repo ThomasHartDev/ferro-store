@@ -35,6 +35,10 @@ impl Store {
         &self.dir
     }
 
+    pub fn last_lsn(&self) -> u64 {
+        self.wal.last_lsn()
+    }
+
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.wal.append_put(key, value)?;
         self.mem.insert(key.to_vec(), value.to_vec());
