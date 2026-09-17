@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ferro_store::Store;
+use ferro_store::{Error, Options, Store};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -115,4 +115,102 @@ fn get_borrows_from_store() {
     store.put(b"k", b"value").unwrap();
     let got = store.get(b"k").unwrap();
     assert_eq!(got, b"value");
+}
+
+fn open_with(bytes: usize) -> (Store, Guard) {
+    let dir = scratch();
+    let store = Store::open_with(&dir, Options::new().write_buffer_size(bytes)).expect("open");
+    (store, Guard(dir))
+}
+
+#[test]
+fn default_write_buffer_is_four_mib() {
+    let (store, _g) = open();
+    assert_eq!(store.write_buffer_size(), Options::DEFAULT_WRITE_BUFFER);
+    assert_eq!(store.size_bytes(), 0);
+    assert!(!store.should_flush());
+}
+
+#[test]
+fn zero_write_buffer_is_rejected() {
+    let dir = scratch();
+    let _g = Guard(dir.clone());
+    assert!(!dir.exists());
+    let err = Store::open_with(&dir, Options::new().write_buffer_size(0)).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidArgument("write_buffer_size must be > 0")),
+        "{err:?}"
+    );
+    assert!(!dir.join("wal.log").exists());
+    assert!(!dir.exists());
+}
+
+#[test]
+fn zero_write_buffer_does_not_touch_an_existing_dir() {
+    let dir = scratch();
+    let _g = Guard(dir.clone());
+    fs::create_dir_all(&dir).unwrap();
+    let marker = dir.join("keep-me");
+    fs::write(&marker, b"ok").unwrap();
+    let err = Store::open_with(&dir, Options::new().write_buffer_size(0)).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidArgument("write_buffer_size must be > 0")),
+        "{err:?}"
+    );
+    assert!(!dir.join("wal.log").exists());
+    assert_eq!(fs::read(&marker).unwrap(), b"ok");
+}
+
+#[test]
+fn size_bytes_is_key_plus_value_payload() {
+    let (mut store, _g) = open_with(64);
+    store.put(b"user:1", b"ada").unwrap();
+    assert_eq!(store.size_bytes(), 9);
+}
+
+#[test]
+fn size_tracks_put_overwrite_and_delete() {
+    let (mut store, _g) = open_with(64);
+    store.put(b"ab", b"c").unwrap();
+    assert_eq!(store.size_bytes(), 3);
+    store.put(b"ab", b"cdef").unwrap();
+    assert_eq!(store.size_bytes(), 6);
+    store.put(b"ab", b"x").unwrap();
+    assert_eq!(store.size_bytes(), 3);
+    assert!(store.delete(b"ab").unwrap());
+    assert_eq!(store.size_bytes(), 0);
+}
+
+#[test]
+fn should_flush_at_threshold() {
+    let (mut store, _g) = open_with(4);
+    store.put(b"abc", b"").unwrap();
+    assert!(!store.should_flush());
+    store.put(b"d", b"").unwrap();
+    assert_eq!(store.size_bytes(), 4);
+    assert!(store.should_flush());
+}
+
+#[test]
+fn replay_rebuilds_the_same_size_bytes() {
+    let dir = scratch();
+    let _g = Guard(dir.clone());
+    let opts = Options::new().write_buffer_size(8);
+    let (live_size, flush) = {
+        let mut store = Store::open_with(&dir, opts.clone()).unwrap();
+        store.put(b"aa", b"bb").unwrap();
+        store.put(b"c", b"ddd").unwrap();
+        store.put(b"aa", b"z").unwrap();
+        store.delete(b"c").unwrap();
+        store.put(b"", b"empty-key").unwrap();
+        (store.size_bytes(), store.should_flush())
+    };
+    let store = Store::open_with(&dir, opts).unwrap();
+    assert_eq!(store.size_bytes(), live_size);
+    assert_eq!(store.should_flush(), flush);
+    assert_eq!(store.get(b"aa"), Some(b"z".as_slice()));
+    assert_eq!(store.get(b"c"), None);
+    assert_eq!(store.get(b""), Some(b"empty-key".as_slice()));
+    assert_eq!(live_size, 12);
+    assert!(store.should_flush());
 }

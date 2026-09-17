@@ -1,30 +1,58 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
+use crate::memtable::Memtable;
 use crate::wal::{Record, Wal};
+
+#[derive(Clone, Debug)]
+pub struct Options {
+    write_buffer_size: usize,
+}
+
+impl Options {
+    pub const DEFAULT_WRITE_BUFFER: usize = 4 * 1024 * 1024;
+
+    pub fn new() -> Self {
+        Self {
+            write_buffer_size: Self::DEFAULT_WRITE_BUFFER,
+        }
+    }
+
+    pub fn write_buffer_size(mut self, bytes: usize) -> Self {
+        self.write_buffer_size = bytes;
+        self
+    }
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug)]
 pub struct Store {
     dir: PathBuf,
-    mem: BTreeMap<Vec<u8>, Vec<u8>>,
+    mem: Memtable,
     wal: Wal,
 }
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with(path, Options::new())
+    }
+
+    pub fn open_with(path: impl AsRef<Path>, options: Options) -> Result<Self> {
+        let mut mem = Memtable::new(options.write_buffer_size)?;
         let dir = path.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
         let (wal, records) = Wal::open(&dir)?;
-        let mut mem = BTreeMap::new();
         for rec in records {
             match rec {
-                Record::Put { key, value } => {
-                    mem.insert(key, value);
-                }
+                Record::Put { key, value } => mem.put(key, value),
                 Record::Delete { key } => {
-                    mem.remove(&key);
+                    let _ = mem.delete(&key);
                 }
             }
         }
@@ -39,19 +67,31 @@ impl Store {
         self.wal.last_lsn()
     }
 
+    pub fn write_buffer_size(&self) -> usize {
+        self.mem.write_buffer_size()
+    }
+
+    pub fn size_bytes(&self) -> usize {
+        self.mem.size_bytes()
+    }
+
+    pub fn should_flush(&self) -> bool {
+        self.mem.should_flush()
+    }
+
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.wal.append_put(key, value)?;
-        self.mem.insert(key.to_vec(), value.to_vec());
+        self.mem.put(key.to_vec(), value.to_vec());
         Ok(())
     }
 
     pub fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        self.mem.get(key).map(Vec::as_slice)
+        self.mem.get(key)
     }
 
     pub fn delete(&mut self, key: &[u8]) -> Result<bool> {
         self.wal.append_delete(key)?;
-        Ok(self.mem.remove(key).is_some())
+        Ok(self.mem.delete(key))
     }
 
     pub fn contains_key(&self, key: &[u8]) -> bool {
@@ -67,6 +107,6 @@ impl Store {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
-        self.mem.iter().map(|(k, v)| (k.as_slice(), v.as_slice()))
+        self.mem.iter()
     }
 }
