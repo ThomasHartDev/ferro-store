@@ -44,10 +44,10 @@ impl Store {
     }
 
     pub fn open_with(path: impl AsRef<Path>, options: Options) -> Result<Self> {
+        let mut mem = Memtable::new(options.write_buffer_size)?;
         let dir = path.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
         let (wal, records) = Wal::open(&dir)?;
-        let mut mem = Memtable::new(options.write_buffer_size)?;
         for rec in records {
             match rec {
                 Record::Put { key, value } => mem.put(key, value),

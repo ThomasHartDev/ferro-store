@@ -51,7 +51,7 @@ drop(store);
 let store = Store::open("/tmp/ferro-demo")?;
 assert_eq!(store.get(b"user:1"), Some(b"ada".as_slice()));
 assert_eq!(store.last_lsn(), 1);
-assert_eq!(store.size_bytes(), 10);
+assert_eq!(store.size_bytes(), 9);
 ```
 
 ## Tests

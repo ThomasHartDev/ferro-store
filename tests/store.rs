@@ -135,11 +135,37 @@ fn default_write_buffer_is_four_mib() {
 fn zero_write_buffer_is_rejected() {
     let dir = scratch();
     let _g = Guard(dir.clone());
+    assert!(!dir.exists());
     let err = Store::open_with(&dir, Options::new().write_buffer_size(0)).unwrap_err();
     assert!(
         matches!(err, Error::InvalidArgument("write_buffer_size must be > 0")),
         "{err:?}"
     );
+    assert!(!dir.join("wal.log").exists());
+    assert!(!dir.exists());
+}
+
+#[test]
+fn zero_write_buffer_does_not_touch_an_existing_dir() {
+    let dir = scratch();
+    let _g = Guard(dir.clone());
+    fs::create_dir_all(&dir).unwrap();
+    let marker = dir.join("keep-me");
+    fs::write(&marker, b"ok").unwrap();
+    let err = Store::open_with(&dir, Options::new().write_buffer_size(0)).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidArgument("write_buffer_size must be > 0")),
+        "{err:?}"
+    );
+    assert!(!dir.join("wal.log").exists());
+    assert_eq!(fs::read(&marker).unwrap(), b"ok");
+}
+
+#[test]
+fn size_bytes_is_key_plus_value_payload() {
+    let (mut store, _g) = open_with(64);
+    store.put(b"user:1", b"ada").unwrap();
+    assert_eq!(store.size_bytes(), 9);
 }
 
 #[test]
